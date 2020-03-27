@@ -19,10 +19,15 @@ def generate_data(mode='linear'):
 	if mode == 'linear':
 		x[:, 0] = np.random.sample(DATA_SIZE)
 		x[:, 1] = np.random.sample(DATA_SIZE)
-		y = np.array([0 for i in range(DATA_SIZE) if x[i][0] - x[i][1] > 0 else 1])
+		for i in range(DATA_SIZE):
+			if x[i][0] - x[i][1] > 0:
+				y[i] = 0
+			else:
+				y[i] = 1
 	if mode == 'xor':
-		for i in range(DATA_SIZE / 2):
-			x[i] = []
+		pass
+
+	return x, y
 
 def init_weight():
 	w1 = np.random.rand(LAYER_0, LAYER_1)
@@ -45,6 +50,9 @@ def backward(loss, z1, z2):
 	grad_y_hat = 2.0 * loss
 
 	s = sigmoid(z2 @ w3)
+	print(grad_y_hat.shape)
+	print(s.shape)
+	print(z2.shape)
 	grad_w3 = grad_y_hat @ (s @ (1 - s)) @ z2
 
 	s = sigmoid(z1 @ w2)
@@ -82,7 +90,7 @@ def visualize(x, prediction, ground_truth):
 	plt.show()
 
 		
-x, y = generate_data()
+x, y = generate_data('linear')
 w1, w2, w3 = init_weight()
 
 for step in range(TRAINING_STEP):
