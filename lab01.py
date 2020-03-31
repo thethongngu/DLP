@@ -1,108 +1,239 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-DATA_SIZE = 100
-TRAINING_STEP = 100
-LEARNING_RATE = 0.01
-LAYER_0 = 2
-LAYER_1 = 10
-LAYER_2 = 10
-LAYER_3 = 1
 
 def sigmoid(x):
-	return 1.0 / (1 + np.exp(-x))
+	""" Sigmoid function.
+	This function accepts any shape of np.ndarray object as input and perform sigmoid operation.
+	"""
+	return 1 / (1 + np.exp(-x))
 
-def generate_data(mode='linear'):
-	x = np.zeros((DATA_SIZE, 2))
-	y = np.zeros((DATA_SIZE, 1))
 
-	if mode == 'linear':
-		x[:, 0] = np.random.sample(DATA_SIZE)
-		x[:, 1] = np.random.sample(DATA_SIZE)
-		for i in range(DATA_SIZE):
-			if x[i][0] - x[i][1] > 0:
-				y[i] = 0
+def der_sigmoid(y):
+	""" First derivative of Sigmoid function.
+	The input to this function should be the value that output from sigmoid function.
+	"""
+	return y * (1 - y)
+
+
+class GenData:
+	@staticmethod
+	def _gen_linear(n=100):
+		""" Data generation (Linear)
+
+		Args:
+			n (int):    the number of data points generated in total.
+
+		Returns:
+			data (np.ndarray, np.float):    the generated data with shape (n, 2). Each row represents
+				a data point in 2d space.
+			labels (np.ndarray, np.int):    the labels that correspond to the data with shape (n, 1).
+				Each row represents a corresponding label (0 or 1).
+		"""
+		data = np.random.uniform(0, 1, (n, 2))
+
+		inputs = []
+		labels = []
+
+		for point in data:
+			inputs.append([point[0], point[1]])
+
+			if point[0] > point[1]:
+				labels.append(0)
 			else:
-				y[i] = 1
-	if mode == 'xor':
-		pass
+				labels.append(1)
 
-	return x, y
+		return np.array(inputs), np.array(labels).reshape((-1, 1))
 
-def init_weight():
-	w1 = np.random.rand(LAYER_0, LAYER_1)
-	w2 = np.random.rand(LAYER_1, LAYER_2)
-	w3 = np.random.rand(LAYER_2, LAYER_3)
+	@staticmethod
+	def _gen_xor(n=100):
+		""" Data generation (XOR)
 
-	return w1, w2, w3
+		Args:
+			n (int):    the number of data points generated in total.
 
-def forward(x, w1, w2, w3):
-	z1 = sigmoid(x @ w1)
-	z2 = sigmoid(z1 @ w2)
-	y_hat = sigmoid(z2 @ w3)
+		Returns:
+			data (np.ndarray, np.float):    the generated data with shape (n, 2). Each row represents
+				a data point in 2d space.
+			labels (np.ndarray, np.int):    the labels that correspond to the data with shape (n, 1).
+				Each row represents a corresponding label (0 or 1).
+		"""
+		data_x = np.linspace(0, 1, n // 2)
 
-	return y_hat, z1, z2
+		inputs = []
+		labels = []
 
-def get_loss(y, y_hat):
-	return y - y_hat
+		for x in data_x:
+			inputs.append([x, x])
+			labels.append(0)
 
-def backward(loss, z1, z2):
-	grad_y_hat = 2.0 * loss
+			if x == 1 - x:
+				continue
 
-	s = sigmoid(z2 @ w3)
-	print(grad_y_hat.shape)
-	print(s.shape)
-	print(z2.shape)
-	grad_w3 = grad_y_hat @ (s @ (1 - s)) @ z2
+			inputs.append([x, 1 - x])
+			labels.append(1)
 
-	s = sigmoid(z1 @ w2)
-	grad_w2 = grad_w3 @ (s @ (1 - s)) @ z1
+		return np.array(inputs), np.array(labels).reshape((-1, 1))
 
-	s = sigmoid(x @ w1)
-	grad_w1 = grad_w2 @ (s @ (1 - s)) @ x
+	@staticmethod
+	def fetch_data(mode, n):
+		""" Data gather interface
 
-	return grad_w1, grad_w2, grad_w3
+		Args:
+			mode (str): 'Linear' or 'XOR', indicate which generator is used.
+			n (int):    the number of data points generated in total.
+		"""
+		assert mode == 'Linear' or mode == 'XOR'
 
-def update_weight(w1, w2, w3, grad):
-	grad_w1, grad_w2, grad_w3 = grad
-	w1 -= LEARNING_RATE * grad_w1
-	w2 -= LEARNING_RATE * grad_w2
-	w3 -= LEARNING_RATE * grad_w3
+		data_gen_func = {
+			'Linear': GenData._gen_linear,
+			'XOR': GenData._gen_xor
+		}[mode]
 
-	return w1, w2, w3
+		return data_gen_func(n)
 
-def visualize(x, prediction, ground_truth):
-	fig, ax = plt.subplots(1, 2)
 
-	red_predict, blue_predict = [], []
-	for i in range(len(x)):
-		red_predict.append(x[i]) if prediction[i] == 0 else blue_predict.append(x[i])
+class SimpleNet:
+	def __init__(self, hidden_size, num_step=2000, print_interval=100):
+		""" A hand-crafted implementation of simple network.
 
-	red_truth, blue_truth = [], []
-	for i in range(len(x)):
-		red_truth.append(x[i]) if ground_truth[i] == 0 else blue_truth.append(x[i])
+		Args:
+			hidden_size:    the number of hidden neurons used in this model.
+			num_step (optional):    the total number of training steps.
+			print_interval (optional):  the number of steps between each reported number.
+		"""
+		self.num_step = num_step
+		self.print_interval = print_interval
+		self.learning_rate = 0.01
 
-	ax[0][0].plot(red_predict[:][0], red_predict[:][1], 'red')
-	ax[0][0].plot(blue_predict[:][0], blue_predict[:][1], 'blue')
-	ax[0][1].plot(red_truth[:][0], red_truth[:][1], 'red')
-	ax[0][1].plot(blue_truth[:][0], blue_truth[:][1], 'blue')
+		# Model parameters initialization
+		# Please initiate your network parameters here.
+		self.w1 = np.random.rand(hidden_size, 2)
+		self.w2 = np.random.rand(hidden_size, hidden_size)
+		self.w3 = np.random.rand(1, hidden_size)
 
-	plt.show()
+	@staticmethod
+	def plot_result(data, gt_y, pred_y):
+		""" Data visualization with ground truth and predicted data comparison. There are two plots
+		for them and each of them use different colors to differentiate the data with different labels.
 
-		
-x, y = generate_data('linear')
-w1, w2, w3 = init_weight()
+		Args:
+			data:   the input data
+			gt_y:   ground truth to the data
+			pred_y: predicted results to the data
+		"""
+		assert data.shape[0] == gt_y.shape[0]
+		assert data.shape[0] == pred_y.shape[0]
 
-for step in range(TRAINING_STEP):
-	
-	y_hat, z1, z2 = forward(x, w1, w2, w3)
-	loss = get_loss(y, y_hat)
-	grad = backward(loss, z1, z2)
-	w1, w2, w3 = update_weight(w1, w2, w3, grad)
+		plt.figure()
 
-	if step % 1000 == 0:
-		print("Step %d loss: %d" % np.sum(np.sqr(loss)))
+		plt.subplot(1, 2, 1)
+		plt.title('Ground Truth', fontsize=18)
 
-prediction = forward(x, w1, w2, w3)
-ground_truth = y
-visualize(x, prediction, ground_truth)
+		for idx in range(data.shape[0]):
+			if gt_y[idx] == 0:
+				plt.plot(data[idx][0], data[idx][1], 'ro')
+			else:
+				plt.plot(data[idx][0], data[idx][1], 'bo')
+
+		plt.subplot(1, 2, 2)
+		plt.title('Prediction', fontsize=18)
+
+		for idx in range(data.shape[0]):
+			if pred_y[idx] == 0:
+				plt.plot(data[idx][0], data[idx][1], 'ro')
+			else:
+				plt.plot(data[idx][0], data[idx][1], 'bo')
+
+		plt.show()
+
+	def forward(self, inputs):
+		""" Implementation of the forward pass.
+		It should accepts the inputs and passing them through the network and return results.
+		"""
+		self.a0 = inputs.T
+
+		self.z1 = self.w1 @ self.a0
+		self.a1 = sigmoid(self.z1)
+
+		self.z2 = self.w2 @ self.a1
+		self.a2 = sigmoid(self.z2)
+
+		self.z3 = self.w3 @ self.a2
+		self.a3 = sigmoid(self.z3)
+
+		return self.a3
+
+	def backward(self):
+		""" Implementation of the backward pass.
+		It should utilize the saved loss to compute gradients and update the network all the way to the front.
+		"""
+		dldz3 = 2 * self.error * der_sigmoid(self.a3)
+		dldw3 = self.a2 @ dldz3.T
+
+		dldz2 = (self.w3.T @ dldz3) * der_sigmoid(self.a2)
+		dldw2 = self.a1 @ dldz2.T
+
+		dldz1 = (self.w2.T @ dldz2) * der_sigmoid(self.a1)
+		dldw1 = self.a0 @ dldz1.T
+
+		self.w3 -= self.learning_rate * dldw3.T
+		self.w2 -= self.learning_rate * dldw2.T
+		self.w1 -= self.learning_rate * dldw1.T
+
+	def train(self, inputs, labels):
+		""" The training routine that runs and update the model.
+
+		Args:
+			inputs: the training (and testing) data used in the model.
+			labels: the ground truth of correspond to input data.
+		"""
+		# make sure that the amount of data and label is match
+		assert inputs.shape[0] == labels.shape[0]
+
+		n = inputs.shape[0]
+
+		for epochs in range(self.num_step):
+			for idx in range(n):
+				# operation in each training step:
+				#   1. forward passing
+				#   2. compute loss
+				#   3. propagate gradient backward to the front
+				self.output = self.forward(inputs[idx:idx+1, :])
+				self.error = self.output - labels[idx:idx+1, :]
+				self.backward()
+
+			if epochs % self.print_interval == 0:
+				print('Epochs {}: '.format(epochs), end='')
+				self.test(inputs, labels)
+
+		print('Training finished')
+		self.test(inputs, labels)
+
+	def test(self, inputs, labels):
+		""" The testing routine that run forward pass and report the accuracy.
+
+		Args:
+			inputs: the testing data. One or several data samples are both okay.
+				The shape is expected to be [BatchSize, 2].
+			labels: the ground truth correspond to the inputs.
+		"""
+		n = inputs.shape[0]
+
+		error = 0.0
+		for idx in range(n):
+			result = self.forward(inputs[idx:idx+1, :])
+			error += abs(result - labels[idx:idx+1, :])
+
+		error /= n
+		print('accuracy: %.2f' % ((1 - error)*100) + '%')
+
+
+if __name__ == '__main__':
+	data, label = GenData.fetch_data('XOR', 70)
+
+	net = SimpleNet(10, num_step=50000)
+	net.train(data, label)
+
+	pred_result = np.round(net.forward(data))
+	SimpleNet.plot_result(data, label, pred_result.T)
