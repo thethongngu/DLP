@@ -94,7 +94,7 @@ class GenData:
 
 
 class SimpleNet:
-	def __init__(self, hidden_size, num_step=2000, print_interval=100):
+	def __init__(self, hidden_size, num_step, learning_rate, batch_size, print_interval=100):
 		""" A hand-crafted implementation of simple network.
 
 		Args:
@@ -102,9 +102,13 @@ class SimpleNet:
 			num_step (optional):    the total number of training steps.
 			print_interval (optional):  the number of steps between each reported number.
 		"""
+		assert batch_size > 0
+
 		self.num_step = num_step
 		self.print_interval = print_interval
-		self.learning_rate = 0.01
+		self.learning_rate = learning_rate
+		self.batch_size = batch_size
+		self.log = []
 
 		# Model parameters initialization
 		# Please initiate your network parameters here.
@@ -145,8 +149,6 @@ class SimpleNet:
 			else:
 				plt.plot(data[idx][0], data[idx][1], 'bo')
 
-		plt.show()
-
 	def forward(self, inputs):
 		""" Implementation of the forward pass.
 		It should accepts the inputs and passing them through the network and return results.
@@ -168,7 +170,7 @@ class SimpleNet:
 		""" Implementation of the backward pass.
 		It should utilize the saved loss to compute gradients and update the network all the way to the front.
 		"""
-		dldz3 = 2 * self.error * der_sigmoid(self.a3)
+		dldz3 = 2 * self.grad_loss * der_sigmoid(self.a3)
 		dldw3 = self.a2 @ dldz3.T
 
 		dldz2 = (self.w3.T @ dldz3) * der_sigmoid(self.a2)
@@ -193,24 +195,29 @@ class SimpleNet:
 
 		n = inputs.shape[0]
 
-		for epochs in range(self.num_step):
-			for idx in range(n):
+		for epochs in range(1, self.num_step + 1):
+			for idx in range(0, n, self.batch_size):
 				# operation in each training step:
 				#   1. forward passing
 				#   2. compute loss
 				#   3. propagate gradient backward to the front
-				self.output = self.forward(inputs[idx:idx+1, :])
-				self.error = self.output - labels[idx:idx+1, :]
+				self.output = self.forward(inputs[idx: idx + self.batch_size, :])
+				self.grad_loss = (self.output - labels[idx: idx + self.batch_size, :].T) / self.batch_size
+				# print('grad=', self.grad_loss.shape)
+				# print(self.output.shape)
+				# print(labels.shape)
+				# print(diff.shape)
+				# input()
 				self.backward()
 
 			if epochs % self.print_interval == 0:
 				print('Epochs {}: '.format(epochs), end='')
-				self.test(inputs, labels)
+				error = self.test(inputs, labels, False)
+				self.log.append((epochs, error))
 
-		print('Training finished')
-		self.test(inputs, labels)
+		return self.log
 
-	def test(self, inputs, labels):
+	def test(self, inputs, labels, show_info):
 		""" The testing routine that run forward pass and report the accuracy.
 
 		Args:
@@ -223,17 +230,66 @@ class SimpleNet:
 		error = 0.0
 		for idx in range(n):
 			result = self.forward(inputs[idx:idx+1, :])
-			error += abs(result - labels[idx:idx+1, :])
+			error += np.squeeze(abs(result - labels[idx:idx+1, :]))
 
 		error /= n
-		print('accuracy: %.2f' % ((1 - error)*100) + '%')
+		print('loss: %.15f' % error)
 
+		if show_info:
+			result = self.forward(inputs)			
+			print("Prediction: ")
+			for var in np.squeeze(result):
+				print('%.15f' % var)
+			print()
+
+		return error
+
+
+def run_experiment(hidden_size, learning_rate, training_step, data_mode, batch_size):
+
+	net = SimpleNet(hidden_size, training_step, learning_rate, batch_size, 100)
+
+	""" Training """
+	train_data, train_label = GenData.fetch_data(data_mode, 70)
+	training_log = net.train(train_data, train_label)
+
+	""" Testing """
+	test_data, test_label = GenData.fetch_data(data_mode, 30)
+	print('Testing: ', end='')
+	net.test(test_data, test_label, True)
+
+	""" Plotting """
+	pred_result = np.round(net.forward(train_data))
+	SimpleNet.plot_result(train_data, train_label, pred_result.T)
+	plt.savefig('%d_%s_%d_%s_%d_0train.png' % (hidden_size, str(learning_rate), training_step, data_mode, batch_size))
+
+	pred_result = np.round(net.forward(test_data))
+	SimpleNet.plot_result(test_data, test_label, pred_result.T)
+	plt.savefig('%d_%s_%d_%s_%d_1test.png' % (hidden_size, str(learning_rate), training_step, data_mode, batch_size))
+
+	return training_log
+
+def plot_summary(configs, legends):
+
+	plt.figure()
+	for j in range(len(configs)):
+		config = configs[j]
+		xx, yy = [], []
+		
+		for i in range(len(config)):
+			xx.append(config[i][0])
+			yy.append(config[i][1])
+		plt.plot(xx, yy, label=legends[j])
+
+	plt.xlabel('epochs')
+	plt.ylabel('error')
+	plt.legend()
+	plt.savefig('summary.png')
 
 if __name__ == '__main__':
-	data, label = GenData.fetch_data('XOR', 70)
 
-	net = SimpleNet(10, num_step=50000)
-	net.train(data, label)
+	d1 = run_experiment(hidden_size=10, learning_rate=0.1, training_step=40000, data_mode='Linear', batch_size=70)
+	# d2 = run_experiment(hidden_size=10, learning_rate=0.01, training_step=40000, data_mode='XOR', batch_size=10)
+	# d5 = run_experiment(hidden_size=10, learning_rate=0.01, training_step=40000, data_mode='XOR', batch_size=70)
 
-	pred_result = np.round(net.forward(data))
-	SimpleNet.plot_result(data, label, pred_result.T)
+	plot_summary([d1, d2, d5, d10], ['0.1', '0.05', '0.01', '0.005'])
