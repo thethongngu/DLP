@@ -203,11 +203,6 @@ class SimpleNet:
 				#   3. propagate gradient backward to the front
 				self.output = self.forward(inputs[idx: idx + self.batch_size, :])
 				self.grad_loss = (self.output - labels[idx: idx + self.batch_size, :].T) / self.batch_size
-				# print('grad=', self.grad_loss.shape)
-				# print(self.output.shape)
-				# print(labels.shape)
-				# print(diff.shape)
-				# input()
 				self.backward()
 
 			if epochs % self.print_interval == 0:
@@ -288,8 +283,8 @@ def plot_summary(configs, legends):
 
 if __name__ == '__main__':
 
-	d1 = run_experiment(hidden_size=10, learning_rate=0.1, training_step=40000, data_mode='Linear', batch_size=70)
-	# d2 = run_experiment(hidden_size=10, learning_rate=0.01, training_step=40000, data_mode='XOR', batch_size=10)
-	# d5 = run_experiment(hidden_size=10, learning_rate=0.01, training_step=40000, data_mode='XOR', batch_size=70)
+	d1 = run_experiment(hidden_size=10, learning_rate=0.05, training_step=100000, data_mode='XOR', batch_size=1)
+	d2 = run_experiment(hidden_size=10, learning_rate=0.05, training_step=100000, data_mode='XOR', batch_size=10)
+	d5 = run_experiment(hidden_size=10, learning_rate=0.05, training_step=1000000, data_mode='XOR', batch_size=70)
 
-	plot_summary([d1, d2, d5, d10], ['0.1', '0.05', '0.01', '0.005'])
+	plot_summary([d1, d2, d5], ['1', '10', '70'])
