@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 def read_bci_data():
     S4b_train = np.load('S4b_train.npz')
@@ -24,4 +25,8 @@ def read_bci_data():
 
     print(train_data.shape, train_label.shape, test_data.shape, test_label.shape)
 
-    return train_data, train_label, test_data, test_label
+    return \
+        torch.from_numpy(train_data).float().cuda(), \
+        torch.from_numpy(train_label).float().cuda(), \
+        torch.from_numpy(test_data).float().cuda(), \
+        torch.from_numpy(test_label).float().cuda() \
