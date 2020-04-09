@@ -1,5 +1,6 @@
 from dataloader import read_bci_data
 from torchsummary import summary
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -94,7 +95,9 @@ class EEGNet(nn.Module):
             nn.Dropout(p=0.25)
         )
 
-        self.classify = nn.Linear(in_features=736, out_features=2, bias=True)
+        self.classify = nn.Sequential(
+            nn.Linear(in_features=736, out_features=2, bias=True)
+        )
 
         self.batch_size = batch_size
         self.learning_rate = learning_rate
@@ -119,7 +122,6 @@ class EEGNet(nn.Module):
         train_log, test_log = [], []
         for epoch in range(self.epochs):
 
-            training_loss = 0.0
             for i in range(0, len(train_data), self.batch_size):
                 inputs = train_data[i: i + self.batch_size]
                 labels = train_label[i: i + self.batch_size]
@@ -132,20 +134,23 @@ class EEGNet(nn.Module):
                 loss.backward()
                 self.optimizer.step()
 
-                training_loss += loss.item()
+            train_acc = self.test(train_data, train_label)
+            test_acc = self.test(test_data, test_label)
+            train_log.append((epoch, train_acc))
+            test_log.append((epoch, test_acc))
+            print('Epoch [%d] training accuracy: %.2f%%' % (epoch, train_acc))
 
-            testing_loss = self.test(test_data, test_label)
-            train_log.append((epoch, training_loss))
-            test_log.append((epoch, testing_loss))
-            print('Epoch [%d] training loss: %.10f' % (epoch, training_loss))
+        print('\nFinished training!')
+        print('Test accuracy: %.2f%%' % test_log[-1][1])
 
         return train_log, test_log
 
-    def test(self, test_data, test_label):
+    def test(self, data, labels):
+
         with torch.no_grad():
-            for i in range(0, len(test_data), self.batch_size):
-                inputs = train_data[i: i + self.batch_size]
-                labels = train_label[i: i + self.batch_size]            
+            outputs = self.forward(data)            
+            corrects = torch.sum(torch.max(outputs, 1)[1] == labels).item()
+            return corrects / len(data) * 100
 
 
 def plot_summary(data):
@@ -168,9 +173,12 @@ def plot_summary(data):
 
 if __name__ == '__main__':
     
-    train_data, train_label, test_data, test_label = read_bci_data()
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print('Device: ', device)
+
+    train_data, train_label, test_data, test_label = read_bci_data()
+    logs = []
 
     eeg_net_elu = EEGNet(activation_type='ELU').cuda()
     eeg_net_relu = EEGNet(activation_type='ReLU').cuda()
@@ -179,6 +187,7 @@ if __name__ == '__main__':
     train_log, test_log = eeg_net_elu.train(train_data, train_label, test_data, test_label)
     logs.append(('EEG_ELU_train', train_log))
     logs.append(('EEG_ELU_test', test_log))
+    plot_summary(logs)
 
     # train_log, test_log = eeg_net_relu.train(train_data, train_label, test_data, test_label)
     # logs.append(('EEG_ReLU_train', train_log))
