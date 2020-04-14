@@ -68,6 +68,22 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs):
     model.load_state_dict(best_model)
     return model, logs 
         
+def test_model(model, dataloader, criterion):
+
+    model.eval()
+
+    n_test = 0
+    corrects = 0
+    for inputs, labels in dataloaders:
+
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+        outputs = model(inputs)
+        corrects += torch.sum(torch.max(outputs, 1)[1] == labels).item()
+        n_test += labels.size()[0]
+
+    acc = corrects / n_test * 100
+    print('Testing Acc: {:.4f}'.format(acc))
 
 
 if __name__ == "__main__":
