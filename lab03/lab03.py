@@ -2,6 +2,7 @@ from dataloader import RetinopathyLoader
 from torch.utils.data import DataLoader
 
 import torchvision.models as models
+import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
@@ -33,6 +34,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
 
+        running_loss = running_corrects = 0
         model.train()
 
         for inputs, labels in dataloaders:
@@ -47,7 +49,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs):
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            _, pred = torch.max(outputs, 1)
+            _, preds = torch.max(outputs, 1)
 
             """ Loss, Accuracy """
             running_loss += loss.item() * inputs.size(0)
@@ -58,7 +60,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs):
         epoch_acc = running_corrects.double() / len(dataloaders.dataset)
         logs.append((epoch, epoch_acc))
 
-        print('Loss: {:.4f} Acc: {:.4f}'.format(epoch_loss, epoch_acc))
+        print('Loss: {:.4f} Acc: {:.4f}\n'.format(epoch_loss, epoch_acc))
 
         if epoch_acc > best_acc:
             best_acc = epoch_acc
@@ -97,12 +99,18 @@ if __name__ == "__main__":
     freeze_model(resnet50)
 
     """ replace the last layer of resnet """
-    resnet18.fc = nn.Linear(512, 2)
-    resnet50.fc = nn.Linear(512, 2)
+    resnet18.fc = nn.Linear(512, 5)
+    resnet50.fc = nn.Linear(512, 5)
 
     """ Load data """
-    trainloader = DataLoader(RetinopathyLoader('data/', 'train'), batch_size=4, shuffle=True, num_workers=4)
-    testloader = DataLoader(RetinopathyLoader('data/', 'test'), batch_size=4, shuffle=True, num_workers=4)
+    trainset = RetinopathyLoader('data/', 'train', transforms.Compose([
+        transforms.ToTensor()   
+    ]))
+    testset = RetinopathyLoader('data/', 'test', transforms.Compose([
+        transforms.ToTensor()
+    ]))
+    trainloader = DataLoader(trainset, batch_size=4, shuffle=True)
+    testloader = DataLoader(testset, batch_size=4, shuffle=True)
 
     """ Training """
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

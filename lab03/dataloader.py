@@ -1,8 +1,8 @@
 from torch.utils import data
+from PIL import Image
 
 import pandas as pd
 import numpy as np
-import imageio
 import torch
 
 
@@ -18,7 +18,7 @@ def getData(mode):
 
 
 class RetinopathyLoader(data.Dataset):
-    def __init__(self, root, mode):
+    def __init__(self, root, mode, transforms=None):
         """
         Args:
             root (string): Root path of the dataset.
@@ -30,6 +30,7 @@ class RetinopathyLoader(data.Dataset):
         self.root = root
         self.img_name, self.label = getData(mode)
         self.mode = mode
+        self.transforms = transforms
         print("> Found %d images..." % (len(self.img_name)))
 
     def __len__(self):
@@ -57,12 +58,11 @@ class RetinopathyLoader(data.Dataset):
             step4. Return processed image and label
         """
 
-        img = imageio.imread(self.root + self.img_name[index] + '.jpeg')
+        img = Image.open(self.root + self.img_name[index] + '.jpeg')
         label = self.label[index]
 
         """ Transform image """
-        img = torch.from_numpy(img)
-        img = img.view(3, 512, 512)
-
-
+        if self.transforms is not None:
+            img = self.transforms(img)
+        
         return img, label
