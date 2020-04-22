@@ -1,6 +1,7 @@
 from torch.utils import data
 from PIL import Image
 
+import torchvision.transforms as tfs
 import pandas as pd
 import numpy as np
 import torch
@@ -31,6 +32,8 @@ class RetinopathyLoader(data.Dataset):
         self.img_name, self.label = getData(mode)
         self.mode = mode
         self.transforms = transforms
+        self.label0_transforms = tfs.Compose([tfs.ToTensor()])
+
         print("> Found %d images..." % (len(self.img_name)))
 
     def __len__(self):
@@ -62,7 +65,9 @@ class RetinopathyLoader(data.Dataset):
         label = self.label[index]
 
         """ Transform image """
-        if self.transforms is not None:
+        if self.transforms is not None and label != 0:
             img = self.transforms(img)
+        else:
+            img = self.label0_transforms(img)
         
         return img, label
