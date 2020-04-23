@@ -73,12 +73,12 @@ class EncoderRNN(nn.Module):
         self.hidden_size = hidden_size
 
         self.embedding = nn.Embedding(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)
+        self.lstm = nn.LSTM(hidden_size, hidden_size)
 
     def forward(self, input, hidden):
         embedded = self.embedding(input).view(1, 1, -1)
         output = embedded
-        output, hidden = self.gru(output, hidden)
+        output, hidden = self.lstm(output, hidden)
         return output, hidden
 
     def initHidden(self):
@@ -174,20 +174,29 @@ def timeSince(since, percent):
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
 
-def load_data(mode, size):
-    filename = 'train.json' if mode == 'train' else 'test.json'
+def load_train_data(size):
+
+    # create index table
+    index2char = {0: 'SOS', 1: 'EOS'}
+    char2index = {}
+    for c in range(97, 123):
+        index2char[c - 95] = chr(c)
+        char2index[chr(c)] = c - 95
+
+    # Extract data from file
     train_set = []
-    
-    with open(filename) as json_file:
+    with open('train.json') as json_file:
         data = json.load(json_file)
         ids = np.random.uniform(0, 4999, size).astype(int)
         for idx in ids:
-            print(idx)
             inputs = data[idx]['input']
             target = data[idx]['target']
             pos = int(np.floor(np.round(np.random.uniform(0, len(inputs) - 1, 1))))
-            print(pos)
-            train_set.append((inputs[pos], target))
+
+            inputs_tensor = [char2index[c] for c in inputs[pos]]
+            target_tensor = [char2index[c] for c in target]
+
+            train_set.append((inputs_tensor, target_tensor))
 
     return train_set
         
@@ -202,13 +211,13 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
     encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
     # your own dataloader
-    training_pairs = load_data('train', n_iters)
+    training_pairs = load_train_data(n_iters)
 
     criterion = nn.CrossEntropyLoss()
 
     for iter in range(1, n_iters + 1):
         training_pair = training_pairs[iter - 1]
-        input_tensor = training_pair[0]
+        input_tensor = training_pair[0]  # TODO: convert string to tensor here
         target_tensor = training_pair[1]
 
         loss = train(input_tensor, target_tensor, encoder,
@@ -223,10 +232,8 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
                                          iter, iter / n_iters * 100, print_loss_avg))
 	
 
-a = load_data('train', 10)
-print(a)
-
-# encoder1 = EncoderRNN(vocab_size, hidden_size).to(device)
-# decoder1 = DecoderRNN(hidden_size, vocab_size).to(device)
-# trainIters(encoder1, decoder1, 75000, print_every=5000)
+    
+encoder1 = EncoderRNN(vocab_size, hidden_size).to(device)
+decoder1 = DecoderRNN(hidden_size, vocab_size).to(device)
+trainIters(encoder1, decoder1, 75000, print_every=5000)
 
