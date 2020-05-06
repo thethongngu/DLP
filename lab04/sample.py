@@ -1,6 +1,7 @@
 from __future__ import unicode_literals, print_function, division
 from io import open
 import unicodedata
+import copy
 import string
 import re
 import random
@@ -12,6 +13,7 @@ import json
 import numpy as np
 
 from torch import optim
+from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
@@ -43,14 +45,16 @@ implement by yourself.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SOS_token = 0
 EOS_token = 1
+
 #----------Hyper Parameters----------#
 hidden_size = 256
-#The number of vocabulary
-vocab_size = 29
-teacher_forcing_ratio = 1.0
+vocab_size = 28   #The number of vocabulary
+teacher_forcing_ratio = 0.5
 LR = 0.05
-MAX_LENGTH = 29
-
+MAX_LENGTH = 28
+index2char = {0: SOS_token, 1: EOS_token}
+char2index = {SOS_token: 0, EOS_token: 1}
+writer = SummaryWriter()
 
 ################################
 #Example inputs of compute_bleu
@@ -63,102 +67,11 @@ output = 'varable'
 #compute BLEU-4 score
 def compute_bleu(output, reference):
     cc = SmoothingFunction()
-    return sentence_bleu([reference], output,weights=(0.25, 0.25, 0.25, 0.25),smoothing_function=cc.method1)
-
-
-#Encoder
-class EncoderRNN(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(EncoderRNN, self).__init__()
-        self.hidden_size = hidden_size
-
-        self.embedding = nn.Embedding(input_size, hidden_size)
-        self.lstm = nn.LSTM(hidden_size, hidden_size)
-
-    def forward(self, input, hidden):
-        embedded = self.embedding(input).view(1, 1, -1)
-        output = embedded
-        output, hidden = self.lstm(output, hidden)
-        return output, hidden
-
-    def initHidden(self):
-        return torch.zeros(1, 1, self.hidden_size, device=device)
-
-#Decoder
-class DecoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size):
-        super(DecoderRNN, self).__init__()
-        self.hidden_size = hidden_size
-
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)
-        self.out = nn.Linear(hidden_size, output_size)
-        self.softmax = nn.LogSoftmax(dim=1)
-
-    def forward(self, input, hidden):
-        output = self.embedding(input).view(1, 1, -1)
-        output = F.relu(output)
-        output, hidden = self.gru(output, hidden)
-        output = self.out(output[0])
-        return output, hidden
-
-    def initHidden(self):
-        return torch.zeros(1, 1, self.hidden_size, device=device)
-
-
-def train(input_tensor, target_tensor, encoder, decoder, 
-            encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
-    encoder_hidden = encoder.initHidden()
-
-    encoder_optimizer.zero_grad()
-    decoder_optimizer.zero_grad()
-
-    input_length = input_tensor.size(0)
-    target_length = target_tensor.size(0)
-
-    encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
-
-    loss = 0
-
-    #----------sequence to sequence part for encoder----------#
-    encoder_output, encoder_hidden = encoder(input_tensor, encoder_hidden)
-
-
-    decoder_input = torch.tensor([[SOS_token]], device=device)
-
-    decoder_hidden = encoder_hidden
-
-    use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
-	
-
-    #----------sequence to sequence part for decoder----------#
-    if use_teacher_forcing:
-        # Teacher forcing: Feed the target as the next input
-        for di in range(target_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            loss += criterion(decoder_output, target_tensor[di])
-            decoder_input = target_tensor[di]  # Teacher forcing
-
+    if len(reference) == 3:
+        weights = (0.33,0.33,0.33)
     else:
-        # Without teacher forcing: use its own predictions as the next input
-        for di in range(target_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            topv, topi = decoder_output.topk(1)
-            decoder_input = topi.squeeze().detach()  # detach from history as input
-
-            loss += criterion(decoder_output, target_tensor[di])
-            if decoder_input.item() == EOS_token:
-                break
-
-    loss.backward()
-
-    encoder_optimizer.step()
-    decoder_optimizer.step()
-
-    return loss.item() / target_length
-
+        weights = (0.25,0.25,0.25,0.25)
+    return sentence_bleu([reference], output,weights=weights,smoothing_function=cc.method1)
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -174,14 +87,14 @@ def timeSince(since, percent):
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
 
-def load_train_data(size):
-
-    # create index table
-    index2char = {0: 'SOS', 1: 'EOS'}
-    char2index = {}
+def create_table():
     for c in range(97, 123):
         index2char[c - 95] = chr(c)
         char2index[chr(c)] = c - 95
+    print(char2index)
+    print(index2char)
+
+def load_train_data(size):
 
     # Extract data from file
     train_set = []
@@ -193,47 +106,225 @@ def load_train_data(size):
             target = data[idx]['target']
             pos = int(np.floor(np.round(np.random.uniform(0, len(inputs) - 1, 1))))
 
-            inputs_tensor = [char2index[c] for c in inputs[pos]]
-            target_tensor = [char2index[c] for c in target]
+            inputs_tensor = torch.tensor([char2index[c] for c in inputs[pos]]).view(-1, 1).to(device)
+            target_tensor = torch.tensor([char2index[c] for c in target]).view(-1, 1).to(device)
 
             train_set.append((inputs_tensor, target_tensor))
 
     return train_set
         
-    
 
-def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01):
+def load_test_data(filetest):
+
+    test_set = []
+    with open(filetest) as json_file:
+        data = json.load(json_file)
+        for point in data:
+            inputs = point['input']
+            target = point['target']
+
+            for inp in inputs:
+                inputs_tensor = torch.tensor([char2index[c] for c in inp]).view(-1, 1).to(device)
+                test_set.append((inp, inputs_tensor, target))
+
+    return test_set
+
+
+#Encoder
+class EncoderRNN(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(EncoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.embedding = nn.Embedding(input_size, hidden_size)
+        self.lstm = nn.LSTM(self.hidden_size, self.hidden_size)
+
+    def forward(self, input, hidden):        
+        
+        output = self.embedding(input)
+        output, hidden = self.lstm(output, hidden)
+        return output, hidden
+
+    def init_tensor(self):
+        return (
+            torch.zeros(1, 1, self.hidden_size, device=device), 
+            torch.randn(1, 1, self.hidden_size, device=device)
+        )
+
+#Decoder
+class DecoderRNN(nn.Module):
+    def __init__(self, hidden_size, output_size):
+        super(DecoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.embedding = nn.Embedding(output_size, hidden_size)
+        self.lstm = nn.LSTM(hidden_size, hidden_size)
+        self.out = nn.Linear(hidden_size, output_size)
+        self.softmax = nn.LogSoftmax(dim=1)
+
+    def forward(self, input, hidden):
+
+        output = self.embedding(input)
+        output = F.relu(output)
+        output, hidden = self.lstm(output, hidden)
+        output = self.out(output[0])
+        output = self.softmax(output)
+
+        return output, hidden
+
+    def init_tensor(self):
+        return (
+            torch.zeros(1, 1, self.hidden_size, device=device), 
+            torch.randn(1, 1, self.hidden_size, device=device)
+        )
+
+
+def train(
+        input_tensor, target_tensor, encoder, decoder, 
+        encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH
+    ):
+
+    encoder_optimizer.zero_grad()
+    decoder_optimizer.zero_grad()
+
+    input_length = input_tensor.size(0)
+    target_length = target_tensor.size(0)
+
+    encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
+
+    loss = 0
+
+    #----------sequence to sequence part for encoder----------#
+    encoder_hidden = encoder.init_tensor()
+    encoder_output, encoder_hidden = encoder(input_tensor, encoder_hidden)
+
+    #----------sequence to sequence part for decoder----------#
+    decoder_hidden = encoder_hidden
+    decoder_input = torch.tensor([[SOS_token]], device=device)
+    use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
+
+    if use_teacher_forcing:  # Teacher forcing: Feed the target as the next input
+        for di in range(target_length):
+            decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden)
+            loss += criterion(decoder_output, target_tensor[di])
+            decoder_input = torch.tensor([[target_tensor[di]]], device=device)   # Teacher forcing
+
+    else:   # Without teacher forcing: use its own predictions as the next input
+        for di in range(target_length):
+            decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden)
+            topv, topi = decoder_output.topk(1)
+            decoder_input = torch.tensor([[topi.squeeze().detach()]], device=device)  # detach from history as input
+
+            loss += criterion(decoder_output, target_tensor[di])
+            if decoder_input.item() == EOS_token:
+                break
+
+    loss.backward()
+
+    encoder_optimizer.step()
+    decoder_optimizer.step()
+
+    return loss.item() / target_length
+
+
+def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=1000, learning_rate=0.01):
     start = time.time()
     plot_losses = []
     print_loss_total = 0  # Reset every print_every
     plot_loss_total = 0  # Reset every plot_every
+    best_bleu = bleu = 0
 
     encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
-    # your own dataloader
+    
     training_pairs = load_train_data(n_iters)
 
     criterion = nn.CrossEntropyLoss()
 
     for iter in range(1, n_iters + 1):
         training_pair = training_pairs[iter - 1]
-        input_tensor = training_pair[0]  # TODO: convert string to tensor here
+        input_tensor = training_pair[0] 
         target_tensor = training_pair[1]
 
-        loss = train(input_tensor, target_tensor, encoder,
-                     decoder, encoder_optimizer, decoder_optimizer, criterion)
+        loss = train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
         print_loss_total += loss
         plot_loss_total += loss
 
+        writer.add_scalar('Loss/train', loss, iter)
+
         if iter % print_every == 0:
+            bleu = evaluate(encoder, decoder, 'test.json', iter)
+            if bleu > best_bleu:
+                # encoder_best_state = copy.deepcopy(encoder.state_dict())
+                # decoder_best_state = copy.deepcopy(decoder.state_dict())
+                torch.save(encoder.state_dict(), 'encoder_state')
+                torch.save(decoder.state_dict(), 'decoder_state')
+                best_bleu = bleu
+
+                print('New checkpoint, bleu %f. Saved' % best_bleu)
+
             print_loss_avg = print_loss_total / print_every
             print_loss_total = 0
-            print('%s (%d %d%%) %.4f' % (timeSince(start, iter / n_iters),
-                                         iter, iter / n_iters * 100, print_loss_avg))
+            print('%s (%d %d%%) %.4f' % (timeSince(start, iter / n_iters), iter, iter / n_iters * 100, print_loss_avg))
 	
 
-    
-encoder1 = EncoderRNN(vocab_size, hidden_size).to(device)
-decoder1 = DecoderRNN(hidden_size, vocab_size).to(device)
-trainIters(encoder1, decoder1, 75000, print_every=5000)
+def evaluate(encoder, decoder, filetest, iter, log=True):
 
+    testing_pairs = load_test_data(filetest)
+    bleu = 0
+
+    for test_id in range(1, len(testing_pairs) + 1):
+        test_pair = testing_pairs[test_id - 1]
+        inp = test_pair[0]
+        input_tensor = test_pair[1] 
+        target = test_pair[2]
+
+        encoder_hidden = encoder.init_tensor()
+        encoder_output, encoder_hidden = encoder(input_tensor, encoder_hidden)
+
+        decoder_input = torch.tensor([[SOS_token]], device=device)
+        decoder_hidden = encoder_hidden
+
+        res = ''    
+        for di in range(len(target)):
+            decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden)
+            topv, topi = decoder_output.topk(1)
+            decoder_input = torch.tensor([[topi.squeeze().detach()]], device=device)    # detach from history as input
+
+            if topi.item() == SOS_token:
+                res += '<SOS>'
+            elif topi.item() == EOS_token:
+                break
+            else:
+                res += index2char[topi.item()]
+
+        print("=================================")
+        print('Input: ', inp)    
+        print('Predict: ', res)
+        print('Target: ', target)               
+
+        bleu += compute_bleu(res, target)
+
+    bleu /= len(testing_pairs)
+    print('Testing, epoch %d: %f' % (iter, bleu))
+
+    if log:
+        writer.add_scalar('BLEU/test', bleu, iter)
+
+    return bleu
+
+
+if __name__ == "__main__":
+    
+    create_table()
+    encoder1 = EncoderRNN(vocab_size, hidden_size).to(device)
+    decoder1 = DecoderRNN(hidden_size, vocab_size).to(device)
+
+    # ---------------- Train model -----------------------------
+
+    # trainIters(encoder1, decoder1, 700000)
+
+    # ----------------- Load model -----------------------------
+
+    encoder1.load_state_dict(torch.load('encoder_state'))
+    decoder1.load_state_dict(torch.load('decoder_state'))
+
+    evaluate(encoder1, decoder1, 'test.json', 1, False)    
