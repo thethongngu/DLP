@@ -1,5 +1,20 @@
+from torch.utils.data import Dataset
+
 import numpy as np
 import torch
+
+
+class BCIDataset(Dataset):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, index):
+        return self.x[index], self.y[index]
+
 
 def read_bci_data():
     S4b_train = np.load('S4b_train.npz')

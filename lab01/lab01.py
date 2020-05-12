@@ -283,8 +283,6 @@ def plot_summary(configs, legends):
 
 if __name__ == '__main__':
 
-	d1 = run_experiment(hidden_size=10, learning_rate=0.05, training_step=100000, data_mode='XOR', batch_size=1)
-	d2 = run_experiment(hidden_size=10, learning_rate=0.05, training_step=100000, data_mode='XOR', batch_size=10)
-	d5 = run_experiment(hidden_size=10, learning_rate=0.05, training_step=1000000, data_mode='XOR', batch_size=70)
+	d1 = run_experiment(hidden_size=10, learning_rate=0.05, training_step=1000, data_mode='Linear', batch_size=1)
 
-	plot_summary([d1, d2, d5], ['1', '10', '70'])
+	# plot_summary([d1, d2, d5], ['1', '10', '70'])

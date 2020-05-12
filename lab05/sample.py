@@ -52,13 +52,13 @@ VOCAB_SIZE = 28
 LATENT_SIZE = 32
 NUM_CONDITION = 4
 CONDITION_SIZE = 8
-TF_RATIO = 0.5
+TF_RATIO = 1
 EMPTY_INP_RATIO = 0.1
 KLD_WEIGHT = 0.0
 LR = 0.05
 
-index2char = {0: SOS_token, 1: EOS_token}
-char2index = {SOS_token: 0, EOS_token: 1}
+index2char = {0: '<SOS>', 1: '<EOS>'}
+char2index = {'<SOS>': 0, '<EOS>': 1}
 
 ground_truth_word = 'accessed'
 predicted_word = 'access'
@@ -104,68 +104,97 @@ def Gaussian_score(words):
 
 # Encoder
 class EncoderRNN(nn.Module):
-    def __init__(self, embedding, con_embedding, hidden_size, latent_size):
+    def __init__(self, embedding, con_embedding, hidden_size, condition_size, latent_size):
         super(EncoderRNN, self).__init__()
 
         self.hidden_size = hidden_size
+        self.condition_size = condition_size
         self.latent_size = latent_size
 
         self.embedding = embedding
         self.con_embedding = con_embedding
-        self.lstm = nn.LSTM(self.hidden_size, self.hidden_size)
-        self.mean = nn.Linear(self.hidden_size, self.latent_size)
-        self.logvar = nn.Linear(self.hidden_size, self.latent_size)
+        self.lstm = nn.LSTM(self.hidden_size, self.hidden_size + self.condition_size)
+        self.mean = nn.Linear(self.hidden_size + self.condition_size, self.latent_size)
+        self.logvar = nn.Linear(self.hidden_size + self.condition_size, self.latent_size)
 
     def reparameterize(self, mean, logvar):
         noise = torch.randn_like(logvar)
         return mean + noise * torch.exp(0.5 * logvar)
 
-    def forward(self, inp_word_tensor, inp_tense_tensor, init_hidden):
-        hidden = torch.cat((init_hidden, inp_tense_tensor), dim=2)
-        outputs, hidden = self.lstm(inp_word_tensor, hidden)
+    def forward(self, inp_word_tensor, inp_tense_tensor, init_tensor):
+        # print("inp_word_tensor", inp_word_tensor.size())
+        # print("inp_tense_tensor", inp_tense_tensor.size())
+
+        hidden, cell = init_tensor
+        hidden = torch.cat((hidden, inp_tense_tensor), dim=2)
+
+        # print("hidden", hidden.size())
+
+        outputs, (hidden, cell) = self.lstm(inp_word_tensor, (hidden, cell))
 
         mean = self.mean(hidden)
         logvar = self.logvar(hidden)
         latent = self.reparameterize(mean, logvar)
+
+        # print()
 
         return latent, mean, logvar
 
 
 # Decoder
 class DecoderRNN(nn.Module):
-    def __init__(self, embedding, con_embedding, hidden_size, output_size):
+    def __init__(self, embedding, con_embedding, hidden_size, condition_size, latent_size, output_size):
         super(DecoderRNN, self).__init__()
+        self.latent_size = latent_size
         self.hidden_size = hidden_size
+        self.condition_size = condition_size
         self.output_size = output_size
 
         self.embedding = embedding
         self.con_embedding = con_embedding
-        self.lstm = nn.LSTM(self.hidden_size, self.hidden_size)
-        self.out = nn.Linear(self.hidden_size, self.output_size)
+        self.lstm = nn.LSTM(self.hidden_size, self.latent_size + self.condition_size)
+        self.out = nn.Linear(self.latent_size + self.condition_size, self.output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
-    def forward(self, latent, out_tense_tensor, out_word_tensor, criterion, teacher_forcing):
-        hidden = torch.cat((latent, out_tense_tensor), dim=2)  # TODO: dim=2 ??
-        x = torch.tensor([[SOS_token]], device=device)
+    def forward(self, latent, out_tense_tensor, out_word_tensor, out_word, criterion, teacher_forcing):
+        # print("latent", latent.size())
+        # print("out_word_tensor", out_word_tensor.size())
+        # print("out_tense_tensor", out_tense_tensor.size())
+
+        hidden = torch.cat((latent, out_tense_tensor), dim=2)
+        cell = torch.randn(1, 1, self.latent_size + self.condition_size, device=device)
 
         entropy_loss = 0.0
         output_str = ""
-        for char_id in range(out_word_tensor.size(0)):
-            outputs, hidden = self.lstm(x, hidden)
-            outputs = F.relu(outputs)
-            outputs = self.out(outputs)
-            outputs = self.softmax(outputs)
-            entropy_loss += criterion(outputs, out_word_tensor[char_id])
+        use_teacher_forcing = True if random.random() < teacher_forcing else False
+        last_output = 2
 
-            if teacher_forcing:
+        for char_id in range(out_word_tensor.size(0)):
+            if use_teacher_forcing:
                 x = out_word_tensor[char_id]
             else:
-                value, index = outputs.topk(1)
-                x = index.squeeze().detach()  # detach from history as input
-                if x.item() == EOS_token:
-                    break
-                else:
-                    output_str += index2char[x.item()]
+                x = self.embedding(torch.tensor([[last_output]], device=device))
+
+            outputs, (hidden, cell) = self.lstm(x.view(1, 1, -1), (hidden, cell))
+            outputs = F.relu(outputs)
+            outputs = self.out(outputs)
+            outputs = self.softmax(outputs).view(1, -1)
+
+            entropy_loss += criterion(outputs, out_word[char_id])
+
+
+            value, index = outputs.topk(1)
+            last_output = index.squeeze().detach()  # detach from history as input
+            last_output = last_output.item()
+
+            if not use_teacher_forcing and last_output == EOS_token:
+                break
+
+            output_str += index2char[last_output]
+
+            print(outputs)
+            print(last_output)
+            print()
 
         return output_str, entropy_loss
 
@@ -174,17 +203,23 @@ class CVAE(nn.Module):
     def __init__(self, vocab_size, hidden_size, num_condition, condition_size, latent_size, output_size):
         super(CVAE, self).__init__()
 
-        self.input_size = vocab_size
+        self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_condition = num_condition
         self.condition_size = condition_size
         self.latent_size = latent_size
         self.output_size = output_size
 
-        self.embedding = nn.Embedding(vocab_size, self.hidden_size)
-        self.con_embedding = nn.Embedding(num_condition, condition_size)
-        self.encoder = EncoderRNN(self.embedding, self.con_embedding, self.hidden_size, self.output_size)
-        self.decoder = DecoderRNN(self.embedding, self.con_embedding, self.hidden_size, self.output_size)
+        self.embedding = nn.Embedding(self.vocab_size, self.hidden_size)
+        self.con_embedding = nn.Embedding(self.num_condition, self.condition_size)
+        self.encoder = EncoderRNN(
+            self.embedding, self.con_embedding, self.hidden_size,
+            self.condition_size, self.latent_size
+        )
+        self.decoder = DecoderRNN(
+            self.embedding, self.con_embedding, self.hidden_size,
+            self.condition_size, self.latent_size, self.output_size
+        )
 
     def forward(self, init_hidden, input_word, output_word, input_tense, output_tense, criterion, teacher_forcing=0.5):
         inp_word_tensor = self.embedding(input_word)
@@ -192,21 +227,25 @@ class CVAE(nn.Module):
         inp_tense_tensor = self.con_embedding(input_tense)
         out_tense_tensor = self.con_embedding(output_tense)
 
-        latent, mean, var = self.encoder(inp_word_tensor, inp_tense_tensor, init_hidden)
-        outputs, entropy_loss = self.decoder(latent, out_tense_tensor, out_word_tensor, criterion, teacher_forcing)
+        # print("input_word:", input_word.size())
+        # print("output_word:", output_word.size())
 
-        return outputs, entropy_loss, KL_divergence(mean, var)
+        latent, mean, logvar = self.encoder(inp_word_tensor, inp_tense_tensor, init_hidden)
+        outputs, entropy_loss = self.decoder(latent, out_tense_tensor, out_word_tensor, output_word, criterion,
+                                             teacher_forcing)
+
+        return outputs, entropy_loss, KL_divergence(mean, logvar)
 
     def init_tensor(self):
         return (
-            torch.zeros(1, 1, self.hidden_size, device=device),
-            torch.randn(1, 1, self.hidden_size, device=device)
+            torch.randn(1, 1, self.hidden_size, device=device),
+            torch.randn(1, 1, self.hidden_size + self.condition_size, device=device)
         )
 
 
 def load_train_data():
     words_list = []
-    with open('dataset/train.txt', 'r') as fp:
+    with open('dataset/pretrain.txt', 'r') as fp:
         for line in fp:
             word = line.split(' ')
             word[3] = word[3].strip('\n')
@@ -215,53 +254,62 @@ def load_train_data():
     return words_list
 
 
-def generate_pair(word):
+def generate_pair(word_list):
     data = []
-    for inp_tense in range(4):
-        for out_tense in range(4):
-            inp_word, out_word = word[inp_tense], word[out_tense]
-            inp_word_tensor = torch.tensor([char2index[c] for c in inp_word]).view(-1, 1).to(device)
-            out_word_tensor = torch.tensor([char2index[c] for c in out_word]).view(-1, 1).to(device)
-            inp_tense_tensor = torch.tensor([inp_tense]).to(device)
-            out_tense_tensor = torch.tensor([out_tense]).to(device)
 
-            data.append((inp_word_tensor, out_word_tensor, inp_tense_tensor, out_tense_tensor))
+    for idx in range(len(word_list)):
+        for inp_tense in range(4):
+            for out_tense in range(4):
+                inp_word, out_word = word_list[idx][inp_tense], word_list[idx][out_tense]
+                inp_word_tensor = torch.tensor([char2index[c] for c in inp_word]).view(-1, 1).to(device)
+                out_word_tensor = torch.tensor([SOS_token] + [char2index[c] for c in out_word]).view(-1, 1).to(device)
+                inp_tense_tensor = torch.tensor([inp_tense]).view(-1, 1).to(device)
+                out_tense_tensor = torch.tensor([out_tense]).view(-1, 1).to(device)
+
+                data.append((
+                    inp_word_tensor, out_word_tensor, inp_tense_tensor,
+                    out_tense_tensor, inp_word, out_word
+                ))
 
     return data
 
 
-def KL_divergence(mean, var):
-    p = torch.distributions.MultivariateNormal(mean, var)
-    q = torch.distributions.MultivariateNormal(torch.zeros(mean.size(0)), torch.eye(mean.size(0)))
-    return torch.distributions.kl_divergence(p, q)
+def KL_divergence(mean, logvar):
+    return 0.5 * (-torch.sum(logvar + 1) + torch.sum(torch.exp(logvar) + torch.sum(mean ** 2)))
 
 
 def train_epoch(word_list, model, encoder_optimizer, decoder_optimizer, criterion):
     sum_entropy_loss = 0
     sum_kl_loss = 0
-    for idx in range(len(word_list)):
 
+    data = generate_pair(word_list)
+    for point in data:
         encoder_optimizer.zero_grad()
         decoder_optimizer.zero_grad()
 
-        data = generate_pair(word_list[idx])
-        for point in data:
-            hidden = model.init_tensor()
-            input_word, output_word, input_tense, output_tense = point
+        hidden = model.init_tensor()
+        input_word, output_word, input_tense, output_tense, inputs, target = point
 
-            outputs, entropy_loss, kl_loss = model(
-                hidden, input_word, output_word, input_tense, output_tense, criterion, TF_RATIO
-            )
-            loss = entropy_loss + KLD_WEIGHT * kl_loss
+        outputs, entropy_loss, kl_loss = model(
+            hidden, input_word, output_word, input_tense, output_tense, criterion, TF_RATIO
+        )
+        loss = entropy_loss + KLD_WEIGHT * kl_loss
 
-            loss.backward()
-            encoder_optimizer.step()
-            decoder_optimizer.step()
+        print("loss: ", loss)
 
-            sum_entropy_loss += entropy_loss.item()
-            sum_kl_loss += kl_loss.item()
+        loss.backward()
+        encoder_optimizer.step()
+        decoder_optimizer.step()
 
-    return sum_entropy_loss / len(word_list), sum_kl_loss / len(word_list)
+        sum_entropy_loss += entropy_loss.item()
+        sum_kl_loss += kl_loss.item()
+
+        print("input", inputs)
+        print("target", target)
+        print("predict", outputs)
+        print()
+
+    return sum_entropy_loss / len(data), sum_kl_loss / len(data)
 
 
 def training(model, epochs=1000, learning_rate=0.01):
@@ -271,27 +319,32 @@ def training(model, epochs=1000, learning_rate=0.01):
     encoder_optimizer = optim.SGD(model.encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.SGD(model.decoder.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
-    model.train()
 
     word_list = load_train_data()
 
     for it in range(1, epochs + 1):
 
+        model.train()
         avg_entropy, avg_kl = train_epoch(word_list, model, encoder_optimizer, decoder_optimizer, criterion)
-        bleu_score = evaluating(model)
 
-        if bleu_score > best_bleu_score:
-            best_bleu_score = bleu_score
-            torch.save(model.state_dict(), 'best_cvae')
-            print('New checkpoint saved!')
+        model.eval()
 
-        writer.add_scalar('Entropy/train', avg_entropy, it)
-        writer.add_scalar('KL/train', avg_kl, it)
-        writer.add_scalar('BLEU/test', bleu_score, it)
+        # bleu_score = evaluating(model)
+        bleu_score = 0  # TODO: delete this line
 
-        print('%s (%d %d%%) Entropy: %.4f KL: %.4f BLEU-4: %.4f' % (
-            timeSince(start, it / epochs), it, it / epochs * 100, avg_entropy, avg_kl, bleu_score)
-              )
+        # if bleu_score > best_bleu_score:
+        #     best_bleu_score = bleu_score
+        #     torch.save(model.state_dict(), 'best_cvae')
+        #     print('New checkpoint saved!')
+        #
+        # writer.add_scalar('Entropy/train', avg_entropy, it)
+        # writer.add_scalar('KL/train', avg_kl, it)
+        # writer.add_scalar('BLEU/test', bleu_score, it)
+
+        print(
+            '%s (%d %d%%) Entropy: %.4f; KL: %.4f; BLEU-4: %.4f' %
+            (timeSince(start, it / epochs), it, it / epochs * 100, avg_entropy, avg_kl, bleu_score)
+        )
 
 
 def load_test_data():
@@ -305,9 +358,13 @@ def load_test_data():
             word[1] = word[1].strip('\n')
 
             inp_word_tensor = torch.tensor([char2index[c] for c in word[0]]).view(-1, 1).to(device)
-            inp_tense_tensor = torch.tensor([inp_tense[idx]]).to(device)
-            out_tense_tensor = torch.tensor([out_tense[idx]]).to(device)
-            data.append([inp_word_tensor, word[1], inp_tense_tensor, out_tense_tensor])
+            out_word_tensor = torch.tensor([SOS_token] + [char2index[c] for c in word[1]]).view(-1, 1).to(device)
+            inp_tense_tensor = torch.tensor([inp_tense[idx]]).view(-1, 1).to(device)
+            out_tense_tensor = torch.tensor([out_tense[idx]]).view(-1, 1).to(device)
+            data.append((
+                inp_word_tensor, out_word_tensor, inp_tense_tensor,
+                out_tense_tensor, word[0], word[1]
+            ))
 
             idx += 1
 
@@ -316,20 +373,23 @@ def load_test_data():
 
 def evaluating(model):
     bleu_score = 0.0
-
     criterion = nn.CrossEntropyLoss()
-    model.eval()
 
     data = load_test_data()
     for point in data:
         hidden = model.init_tensor()
-        input_word, output_word, input_tense, output_tense = point
+        input_word, output_word, input_tense, output_tense, inputs, target = point
 
         outputs, entropy_loss, kl_loss = model(
             hidden, input_word, output_word, input_tense, output_tense, criterion, TF_RATIO
         )
 
-        bleu_score += compute_bleu(outputs, output_word)
+        bleu_score += compute_bleu(outputs, target)
+
+        print("input", inputs)
+        print("target", target)
+        print("predict", outputs)
+        print()
 
     return bleu_score / (len(data))
 
