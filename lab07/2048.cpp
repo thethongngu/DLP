@@ -463,16 +463,23 @@ public:
 	 * estimate the value of a given board
 	 */
 	virtual float estimate(const board& b) const {
-		// TODO
-
+	    float value = 0.0;
+	    for(int i = 0; i < 8; i++) {
+            value += weight[indexof(isomorphic[i], b)];
+	    }
+	    return value;
 	}
 
 	/**
 	 * update the value of a given board, and return its updated value
 	 */
 	virtual float update(const board& b, float u) {
-		// TODO
-
+	    float total = 0.0;
+		for(int i = 0; i < 8; i++) {
+		    weight[indexof(isomorphic[i], b)] += u;
+            total += weight[indexof(isomorphic[i], b)];
+		}
+		return total;
 	}
 
 	/**
@@ -509,7 +516,11 @@ public:
 protected:
 
 	size_t indexof(const std::vector<int>& patt, const board& b) const {
-		// TODO
+	    int index = 0;
+		for(int i : patt) {
+            index = index * 10 + b.at(i);
+		}
+		return index;
 	}
 
 	std::string nameof(const std::vector<int>& patt) const {
@@ -528,14 +539,11 @@ protected:
  */
 class state {
 public:
-	state(int opcode = -1)
-		: opcode(opcode), score(-1), esti(-std::numeric_limits<float>::max()) {}
-	state(const board& b, int opcode = -1)
-		: opcode(opcode), score(-1), esti(-std::numeric_limits<float>::max()) { assign(b); }
+	state(int opcode = -1) : opcode(opcode), score(-1), esti(-std::numeric_limits<float>::max()) {}
+	state(const board& b, int opcode = -1) : opcode(opcode), score(-1), esti(-std::numeric_limits<float>::max()) { assign(b); }
 	state(const state& st) = default;
 	state& operator =(const state& st) = default;
 
-public:
 	board after_state() const { return after; }
 	board before_state() const { return before; }
 	float value() const { return esti; }
@@ -548,7 +556,6 @@ public:
 	void set_reward(int r) { score = r; }
 	void set_action(int a) { opcode = a; }
 
-public:
 	bool operator ==(const state& s) const {
 		return (opcode == s.opcode) && (before == s.before) && (after == s.after) && (esti == s.esti) && (score == s.score);
 	}
@@ -560,8 +567,6 @@ public:
 	bool operator > (const state& s) const { return s < *this; }
 	bool operator <=(const state& s) const { return !(s < *this); }
 	bool operator >=(const state& s) const { return !(*this < s); }
-
-public:
 
 	/**
 	 * assign a state (before state), then apply the action (defined in opcode)
@@ -680,7 +685,8 @@ public:
 		state* best = after;
 		for (state* move = after; move != after + 4; move++) {
 			if (move->assign(b)) {
-				// TODO
+			    int reward = move->reward();
+				move->set_value((float)reward + estimate(move->after_state()));
 
 				if (move->value() > best->value())
 					best = move;
@@ -707,8 +713,18 @@ public:
 	 *  where (x,x,x,x) means (before state, after state, action, reward)
 	 */
 	void update_episode(std::vector<state>& path, float alpha = 0.1) const {
-		// TODO
 
+	    float update_value;
+
+        // terminal state
+        update_value = alpha * (0 - estimate(path.back().before_state()));
+        update(path.back().before_state(), update_value);
+
+        // other states
+        for(unsigned long id = path.size() - 1; id > 0; id--) {
+            update_value = alpha * (path[id].reward() + estimate(path[id].after_state()) - estimate(path[id - 1].after_state()));
+            update(path[id - 1].after_state(), update_value);
+        }
 	}
 
 	/**
@@ -828,7 +844,7 @@ int main(int argc, const char* argv[]) {
 
 	// set the learning parameters
 	float alpha = 0.1;
-	size_t total = 100000;
+	size_t total = 1;
 	unsigned seed;
 	__asm__ __volatile__ ("rdtsc" : "=a" (seed));
 	info << "alpha = " << alpha << std::endl;
@@ -878,7 +894,7 @@ int main(int argc, const char* argv[]) {
 	}
 
 	// store the model into file
-	tdl.save("");
+	tdl.save("weights");
 
 	return 0;
 }
