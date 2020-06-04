@@ -722,7 +722,11 @@ public:
 
         // other states
         for(unsigned long id = path.size() - 1; id > 0; id--) {
-            update_value = alpha * (path[id].reward() + estimate(path[id].after_state()) - estimate(path[id - 1].after_state()));
+            update_value = alpha * (
+                path[id].reward() +
+                estimate(path[id].after_state()) -
+                estimate(path[id - 1].after_state())
+            );
             update(path[id - 1].after_state(), update_value);
         }
 	}
@@ -843,8 +847,8 @@ int main(int argc, const char* argv[]) {
 	learning tdl;
 
 	// set the learning parameters
-	float alpha = 0.1;
-	size_t total = 100000;
+	float alpha = 0.025;
+	size_t total = 1000;
 	unsigned seed;
 	__asm__ __volatile__ ("rdtsc" : "=a" (seed));
 	info << "alpha = " << alpha << std::endl;
@@ -898,7 +902,7 @@ int main(int argc, const char* argv[]) {
 	}
 
 	// store the model into file
-	tdl.save("weights");
+	tdl.save("");
 	f.close();
 
 	return 0;
