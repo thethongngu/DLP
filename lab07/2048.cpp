@@ -844,13 +844,16 @@ int main(int argc, const char* argv[]) {
 
 	// set the learning parameters
 	float alpha = 0.1;
-	size_t total = 1;
+	size_t total = 100000;
 	unsigned seed;
 	__asm__ __volatile__ ("rdtsc" : "=a" (seed));
 	info << "alpha = " << alpha << std::endl;
 	info << "total = " << total << std::endl;
 	info << "seed = " << seed << std::endl;
 	std::srand(seed);
+
+    std::ofstream f;
+    f.open("log.txt");
 
 	// initialize the features
 	tdl.add_feature(new pattern({ 0, 1, 2, 3, 4, 5 }));
@@ -859,7 +862,7 @@ int main(int argc, const char* argv[]) {
 	tdl.add_feature(new pattern({ 4, 5, 6, 8, 9, 10 }));
 
 	// restore the model from file
-	tdl.load("");
+	tdl.load("weights");
 
 	// train the model
 	std::vector<state> path;
@@ -886,6 +889,7 @@ int main(int argc, const char* argv[]) {
 			}
 		}
 		debug << "end episode" << std::endl;
+        f << score << '\n';
 
 		// update by TD(0)
 		tdl.update_episode(path, alpha);
@@ -895,6 +899,7 @@ int main(int argc, const char* argv[]) {
 
 	// store the model into file
 	tdl.save("weights");
+	f.close();
 
 	return 0;
 }
