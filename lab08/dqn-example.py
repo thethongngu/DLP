@@ -1,4 +1,4 @@
-'''DLP DQN Lab'''
+"""DLP DQN Lab"""
 __author__ = 'chengscott'
 __copyright__ = 'Copyright 2020, NCTU CGI Lab'
 
@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -49,7 +50,7 @@ class Net(nn.Module):
         """ DONE """
         x = F.relu(self.dense01(x))
         x = F.relu(self.dense02(x))
-        x = F.relu(self.dense03(x))
+        x = self.dense03(x)
 
         return x
 
@@ -58,15 +59,17 @@ class DQN:
     def __init__(self, args):
         self._behavior_net = Net().to(args.device)
         self._target_net = Net().to(args.device)
+
         # initialize target network
         self._target_net.load_state_dict(self._behavior_net.state_dict())
-        ## TODO ##
-        # self._optimizer = ?
-        raise NotImplementedError
+
+        """ DONE """
+        self._optimizer = optim.Adam(self._behavior_net.parameters(), lr=args.lr)
+
         # memory
         self._memory = ReplayMemory(capacity=args.capacity)
 
-        ## config ##
+        # config
         self.device = args.device
         self.batch_size = args.batch_size
         self.gamma = args.gamma
@@ -74,13 +77,21 @@ class DQN:
         self.target_freq = args.target_freq
 
     def select_action(self, state, epsilon, action_space):
-        '''epsilon-greedy based on behavior network'''
-        ## TODO ##
-        raise NotImplementedError
+        """epsilon-greedy based on behavior network"""
+
+        """ DONE """
+        self._behavior_net.eval()
+        with torch.no_grad():
+            actions = self._behavior_net(torch.from_numpy(state).to(self.device))
+        self._behavior_net.train()
+
+        if random.random() > epsilon:
+            return np.argmax(actions.cpu().numpy())
+        else:
+            return random.choice(np.arange(action_space.n))
 
     def append(self, state, action, reward, next_state, done):
-        self._memory.append(state, [action], [reward / 10], next_state,
-                            [int(done)])
+        self._memory.append(state, [action], [reward / 10], next_state, [int(done)])
 
     def update(self, total_steps):
         if total_steps % self.freq == 0:
@@ -90,17 +101,17 @@ class DQN:
 
     def _update_behavior_network(self, gamma):
         # sample a minibatch of transitions
-        state, action, reward, next_state, done = self._memory.sample(
-            self.batch_size, self.device)
+        state, action, reward, next_state, done = self._memory.sample(self.batch_size, self.device)
 
-        ## TODO ##
-        # q_value = ?
-        # with torch.no_grad():
-        #    q_next = ?
-        #    q_target = ?
-        # criterion = ?
-        # loss = criterion(q_value, q_target)
-        raise NotImplementedError
+        """ DONE """
+        q_value = torch.gather(self._behavior_net(state), 1, action.to(dtype=torch.long))
+        with torch.no_grad():
+            q_next, _ = torch.max(self._target_net(next_state).detach(), dim=1)
+            q_next = q_next.view(-1, 1)
+            q_target = reward + (gamma * q_next * (1 - done))
+        criterion = torch.nn.MSELoss()
+        loss = criterion(q_value, q_target)
+
         # optimize
         self._optimizer.zero_grad()
         loss.backward()
@@ -108,9 +119,9 @@ class DQN:
         self._optimizer.step()
 
     def _update_target_network(self):
-        '''update target network by copying from behavior network'''
-        ## TODO ##
-        raise NotImplementedError
+        """update target network by copying from behavior network"""
+        """ DONE """
+        self._target_net.load_state_dict(self._behavior_net.state_dict())
 
     def save(self, model_path, checkpoint=False):
         if checkpoint:
@@ -167,7 +178,7 @@ def train(args, env, agent, writer):
                 writer.add_scalar('Train/Ewma Reward', ewma_reward, total_steps)
                 print(
                     'Step: {}\tEpisode: {}\tLength: {:3d}\tTotal reward: {:.2f}\tEwma reward: {:.2f}\tEpsilon: {:.3f}'
-                        .format(total_steps, episode, t, total_reward, ewma_reward, epsilon)
+                    .format(total_steps, episode, t, total_reward, ewma_reward, epsilon)
                 )
                 break
     env.close()
@@ -183,22 +194,31 @@ def test(args, env, agent, writer):
         total_reward = 0
         env.seed(seed)
         state = env.reset()
-        ## TODO ##
-        # ...
-        #     if done:
-        #         writer.add_scalar('Test/Episode Reward', total_reward, n_episode)
-        #         ...
-        raise NotImplementedError
+
+        """ DONE """
+        while True:
+            if args.render:
+                env.render()
+            action = agent.select_action(state, epsilon, action_space)
+            state, reward, done, _ = env.step(action)
+            total_reward += reward
+
+            if done:
+                writer.add_scalar('Test/Episode Reward', total_reward, n_episode)
+                rewards.append(total_reward)
+                break
+
     print('Average Reward', np.mean(rewards))
     env.close()
 
 
 def main():
-    ## arguments ##
+    # arguments
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-d', '--device', default='cuda')
     parser.add_argument('-m', '--model', default='dqn.pth')
-    parser.add_argument('--logdir', default='log/dqn')
+    parser.add_argument('--logdir', default='dqn')
+
     # train
     parser.add_argument('--warmup', default=10000, type=int)
     parser.add_argument('--episode', default=1200, type=int)
@@ -209,7 +229,8 @@ def main():
     parser.add_argument('--eps_min', default=.01, type=float)
     parser.add_argument('--gamma', default=.99, type=float)
     parser.add_argument('--freq', default=4, type=int)
-    parser.add_argument('--target_freq', default=1000, type=int)
+    parser.add_argument('--target_freq', default=100, type=int)
+
     # test
     parser.add_argument('--test_only', action='store_true')
     parser.add_argument('--render', action='store_true')
@@ -217,10 +238,10 @@ def main():
     parser.add_argument('--test_epsilon', default=.001, type=float)
     args = parser.parse_args()
 
-    ## main ##
+    # main
     env = gym.make('LunarLander-v2')
     agent = DQN(args)
-    writer = SummaryWriter(args.logdir)
+    writer = SummaryWriter()
     if not args.test_only:
         train(args, env, agent, writer)
         agent.save(args.model)
